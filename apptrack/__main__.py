@@ -54,8 +54,8 @@ def main() -> int:
         from .store import Store
 
         store = Store(cfg.db_path)
-        subject, body = build_digest(cfg, store, {})
-        send_digest(cfg, subject, body)
+        subject, body, html_body = build_digest(cfg, store, {})
+        send_digest(cfg, subject, body, html_body)
         store.close()
         return 0
 

@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 import gspread
 
 from .config import Config
+from .links import gmail_link
 from .models import Application, Status
 from .store import Store
 
@@ -81,6 +82,17 @@ def _fmt(dt: datetime | None) -> str:
 
 def _fmt_full(dt: datetime | None) -> str:
     return dt.astimezone().strftime("%Y-%m-%d %H:%M") if dt else ""
+
+
+def _email_cell(app: Application) -> str:
+    """The Latest Email cell: a clickable Gmail deep link when we know the
+    Message-ID, plain subject text otherwise."""
+    subject = app.last_subject[:120]
+    url = gmail_link(app.last_message_id)
+    if not url:
+        return subject
+    label = subject.replace('"', '""')
+    return f'=HYPERLINK("{url}", "{label}")'
 
 
 def days_silent(app: Application, now: datetime) -> int:
@@ -285,6 +297,11 @@ class SheetWriter:
         nrows = len(data)
         ws.clear()
         ws.update(data, "A1")
+        # Email column separately as USER_ENTERED so only its HYPERLINK formulas
+        # are parsed — everything else stays literal text.
+        if apps:
+            ws.update([[_email_cell(a)] for a in apps], f"I2:I{nrows}",
+                      value_input_option="USER_ENTERED")
 
         req: list[dict] = [
             _grid_size(ws, rows=max(nrows + 20, 60), cols=len(HEADERS)),
@@ -336,6 +353,9 @@ class SheetWriter:
         ]
         ws.clear()
         ws.update(data, "A1")
+        if fu:
+            ws.update([[_email_cell(a)] for a in fu], f"E2:E{len(data)}",
+                      value_input_option="USER_ENTERED")
         req = [
             _grid_size(ws, rows=max(len(data) + 10, 30), cols=5),
             *_col_widths(ws, [180, 260, 95, 90, 330]),

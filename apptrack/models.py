@@ -61,3 +61,4 @@ class Application:
     ats_source: str
     thread_ids: list[str] = field(default_factory=list)
     notes: str = ""
+    last_message_id: str = ""  # RFC 822 Message-ID of the latest email, for Gmail deep links

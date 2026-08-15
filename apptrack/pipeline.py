@@ -97,8 +97,8 @@ def run_sync(cfg: Config, send_email: bool = True, write_sheet: bool = True) -> 
 
     if send_email:
         try:
-            subject, body = build_digest(cfg, store, stats)
-            send_digest(cfg, subject, body)
+            subject, body, html_body = build_digest(cfg, store, stats)
+            send_digest(cfg, subject, body, html_body)
         except Exception as exc:
             log.exception("Digest send failed")
 

@@ -61,6 +61,7 @@ def upsert(store: Store, email: Email, verdict: Verdict) -> UpsertResult:
             last_subject=email.subject,
             ats_source=_ats_of(email),
             thread_ids=[email.thread_id] if email.thread_id else [],
+            last_message_id=email.message_id,
         )
         app_id = store.insert_application(new_app)
         return UpsertResult(app_id, True, True, None, verdict.status)
@@ -78,6 +79,7 @@ def upsert(store: Store, email: Email, verdict: Verdict) -> UpsertResult:
     if email.date >= (app.last_update or email.date):
         app.last_update = email.date
         app.last_subject = email.subject
+        app.last_message_id = email.message_id
     if email.thread_id and email.thread_id not in app.thread_ids:
         app.thread_ids.append(email.thread_id)
 

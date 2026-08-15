@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS applications (
     last_subject TEXT NOT NULL DEFAULT '',
     ats_source TEXT NOT NULL DEFAULT '',
     notes TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    last_message_id TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS app_threads (
     thread_id TEXT PRIMARY KEY,
@@ -92,6 +93,22 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(_SCHEMA)
         self.conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Additive migrations for databases created by older versions."""
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(applications)")}
+        if "last_message_id" not in cols:
+            self.conn.execute("ALTER TABLE applications ADD COLUMN last_message_id TEXT NOT NULL DEFAULT ''")
+        # Backfill from the processed-email log (latest linked email per application).
+        self.conn.execute(
+            """UPDATE applications SET last_message_id = COALESCE(
+                   (SELECT p.message_id FROM processed_emails p
+                    WHERE p.app_id = applications.id AND p.message_id != ''
+                    ORDER BY p.processed_at DESC LIMIT 1), '')
+               WHERE last_message_id = ''"""
+        )
+        self.conn.commit()
 
     # --- sync state ---------------------------------------------------------
 
@@ -141,6 +158,7 @@ class Store:
             ats_source=row["ats_source"],
             thread_ids=threads,
             notes=row["notes"],
+            last_message_id=row["last_message_id"],
         )
 
     def all_applications(self) -> list[Application]:
@@ -164,8 +182,8 @@ class Store:
 
     def insert_application(self, app: Application) -> int:
         cur = self.conn.execute(
-            "INSERT INTO applications(company,company_norm,role,status,applied_at,last_update,last_subject,ats_source,notes,created_at)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO applications(company,company_norm,role,status,applied_at,last_update,last_subject,ats_source,notes,created_at,last_message_id)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (
                 app.company,
                 normalize_company(app.company),
@@ -177,6 +195,7 @@ class Store:
                 app.ats_source,
                 app.notes,
                 _iso(datetime.now(timezone.utc)),
+                app.last_message_id,
             ),
         )
         app_id = cur.lastrowid
@@ -190,7 +209,7 @@ class Store:
     def update_application(self, app: Application) -> None:
         assert app.id is not None
         self.conn.execute(
-            "UPDATE applications SET company=?,company_norm=?,role=?,status=?,applied_at=?,last_update=?,last_subject=?,ats_source=? WHERE id=?",
+            "UPDATE applications SET company=?,company_norm=?,role=?,status=?,applied_at=?,last_update=?,last_subject=?,ats_source=?,last_message_id=? WHERE id=?",
             (
                 app.company,
                 normalize_company(app.company),
@@ -200,6 +219,7 @@ class Store:
                 _iso(app.last_update),
                 app.last_subject,
                 app.ats_source,
+                app.last_message_id,
                 app.id,
             ),
         )
