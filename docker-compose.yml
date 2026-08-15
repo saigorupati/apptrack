@@ -1,0 +1,24 @@
+# AppTrack — nightly job-application email tracker.
+# Set LLM_DOCKER_NETWORK in .env to the external docker network your LLM
+# container lives on, so LLM_BASE_URL (e.g. http://llama:8080/v1) resolves.
+services:
+  apptrack:
+    build: .
+    image: apptrack:latest
+    container_name: apptrack
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"   # host user owns /data files
+    mem_limit: 512m
+    env_file: .env
+    environment:
+      TZ: ${TZ:-America/New_York}
+    volumes:
+      - ./data:/data                                  # SQLite state
+      - ./secrets/service-account.json:/secrets/service-account.json:ro
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
+    name: ${LLM_DOCKER_NETWORK:-bridge}
