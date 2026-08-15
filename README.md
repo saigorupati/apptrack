@@ -15,7 +15,7 @@ leaves your machine except the rows you choose to mirror into your Google Sheet.
 |---|---|
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Applications](docs/screenshots/applications.png) |
 
-*(Demo data — [view the live demo sheet](DEMO_SHEET_URL))*
+*(Demo data — [view the live demo sheet](https://docs.google.com/spreadsheets/d/1InAMRfLGmP9Ax0Mt99ke9llUPa_N6xX8G3ERI96JHrc))*
 
 ## How it works
 

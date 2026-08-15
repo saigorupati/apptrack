@@ -24,8 +24,8 @@ from .store import Store
 log = logging.getLogger(__name__)
 
 HEADERS = [
-    "Company", "Role", "Progress", "Status", "Applied", "Last Update",
-    "Days Silent", "Follow Up", "Latest Email", "Source", "Notes", "app_id",
+    "Company", "Role", "Progress", "Status", "Applied", "Updated",
+    "Silent", "Follow Up", "Latest Email", "Source", "Notes", "app_id",
 ]
 
 _STATUS_ORDER = {
@@ -71,7 +71,7 @@ _STATUS_LABEL = {
     "NEEDS_REVIEW": "Review",
 }
 
-_APP_COL_WIDTHS = [180, 260, 90, 100, 95, 95, 80, 85, 330, 110, 240, 40]
+_APP_COL_WIDTHS = [180, 260, 90, 100, 95, 95, 75, 100, 330, 110, 240, 40]
 _DASH_COL_WIDTHS = [150, 150, 150, 150, 150, 150, 60]
 
 
@@ -248,6 +248,7 @@ class SheetWriter:
             _fill(ws, 3, 5, 0, 6, _TILE_BG),
             _text(ws, 3, 4, 0, 6, size=9, bold=True, color=_MUTED),
             _text(ws, 4, 5, 0, 6, size=22, bold=True, color=_INK),
+            _align(ws, 3, 5, 0, 6, "CENTER"),
             # Section headers
             _text(ws, 6, 7, 0, 2, size=11, bold=True),
             _text(ws, 13, 14, 0, 2, size=11, bold=True),
