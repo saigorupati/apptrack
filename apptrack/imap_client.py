@@ -27,6 +27,16 @@ _HTML_TAG_RE = re.compile(r"<(?:script|style)[^>]*>.*?</(?:script|style)>", re.D
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"[ \t]{2,}")
 _NL_RE = re.compile(r"\n{3,}")
+# Invisible preheader padding (zero-width chars, combining grapheme joiner, soft
+# hyphen) and non-breaking spaces break word-boundary regexes downstream:
+# "Position at\xa0Teradata" never matched "position at <Company>".
+_INVISIBLE_RE = re.compile("[­͏​-‏⁠﻿]")
+_NBSP_RE = re.compile(r"[   ]|&nbsp;?", re.IGNORECASE)
+
+
+def clean_text(s: str) -> str:
+    """Normalize whitespace quirks so subject/body regexes see plain spaces."""
+    return _INVISIBLE_RE.sub("", _NBSP_RE.sub(" ", s))
 
 
 def _html_to_text(html: str) -> str:
@@ -86,8 +96,8 @@ def _parse_message(uid: int, raw: bytes, thread_id: str) -> Email | None:
         sender=sender,
         sender_email=addr,
         sender_domain=domain,
-        subject=str(msg.get("Subject", "")).strip(),
-        body=_best_body(msg)[:20000],
+        subject=clean_text(str(msg.get("Subject", ""))).strip(),
+        body=clean_text(_best_body(msg))[:20000],
         date=date.astimezone(timezone.utc),
     )
 

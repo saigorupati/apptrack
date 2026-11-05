@@ -16,10 +16,17 @@ log = logging.getLogger(__name__)
 
 
 def _next_run(now: datetime, hour: int) -> datetime:
-    candidate = now.replace(hour=hour, minute=0, second=0, microsecond=0)
-    if candidate <= now:
+    """Next HOUR:00 local wall-clock time after `now`, DST-correct.
+
+    Arithmetic is done on naive local time and only then given an offset:
+    replacing the hour on an offset-aware datetime kept the old UTC offset, so
+    on the November fall-back day the job ran at 01:00 EST and again at 02:00.
+    """
+    local_now = now.astimezone().replace(tzinfo=None)
+    candidate = local_now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if candidate <= local_now:
         candidate += timedelta(days=1)
-    return candidate
+    return candidate.astimezone()  # naive → system local zone, with that date's offset
 
 
 def run_forever(cfg: Config) -> None:

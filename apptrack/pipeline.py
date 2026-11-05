@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 
 from . import matcher, prefilter, rules
 from .config import Config
@@ -18,6 +19,18 @@ log = logging.getLogger(__name__)
 
 # Matches our own digest subjects, including "Re:"/"Fwd:" chains and any dash variant.
 _DIGEST_SUBJECT_RE = re.compile(r"^\s*(?:(?:re|fwd?)\s*:\s*)*apptrack\b", re.IGNORECASE)
+
+# Google Sheets returns sporadic 503s (three nightly writes lost so far); retry those.
+_SHEET_ATTEMPTS = 3
+_SHEET_RETRY_S = 60
+
+
+def _is_transient(exc: Exception) -> bool:
+    """5xx / network errors are worth retrying; 4xx (e.g. 403 permission) are not."""
+    code = getattr(getattr(exc, "response", None), "status_code", None)
+    if code is not None:
+        return code >= 500 or code == 429
+    return isinstance(exc, (ConnectionError, TimeoutError, OSError))
 
 
 def run_sync(cfg: Config, send_email: bool = True, write_sheet: bool = True) -> dict:
@@ -39,7 +52,10 @@ def run_sync(cfg: Config, send_email: bool = True, write_sheet: bool = True) -> 
                 store.mark_processed(email.uid, uidvalidity, email.message_id, None, "ignored")
                 continue
 
-            if not prefilter.is_candidate(email):
+            # A reply in a thread already linked to an application is always a
+            # candidate, however casual ("Following up", "Quick question").
+            linked = bool(email.thread_id) and store.find_by_thread(email.thread_id) is not None
+            if not linked and not prefilter.is_candidate(email):
                 store.mark_processed(email.uid, uidvalidity, email.message_id, None, "ignored")
                 continue
             stats["candidates"] += 1
@@ -87,13 +103,20 @@ def run_sync(cfg: Config, send_email: bool = True, write_sheet: bool = True) -> 
     )
 
     if write_sheet:
-        try:
-            writer = SheetWriter(cfg)
-            writer.pull_notes(store)
-            writer.write(store)
-        except Exception as exc:
-            log.exception("Sheet write failed")
-            stats["error"] = (stats["error"] or "") + f" | sheet: {exc}"
+        for attempt in range(1, _SHEET_ATTEMPTS + 1):
+            try:
+                writer = SheetWriter(cfg)
+                writer.pull_notes(store)
+                writer.write(store)
+                break
+            except Exception as exc:
+                if attempt < _SHEET_ATTEMPTS and _is_transient(exc):
+                    log.warning("Sheet write failed (attempt %d), retrying in %ds: %s", attempt, _SHEET_RETRY_S, exc)
+                    time.sleep(_SHEET_RETRY_S)
+                    continue
+                log.exception("Sheet write failed")
+                stats["error"] = (stats["error"] or "") + f" | sheet: {exc}"
+                break
 
     if send_email:
         try:

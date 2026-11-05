@@ -31,11 +31,20 @@ Respond with ONLY a JSON object, no prose, matching exactly:
 }
 
 Rules:
-- is_job_related=false for: job-listing newsletters, job alerts, promotions,
-  networking spam, anything not about an application the user submitted.
+- is_job_related=false for anything not about an application the user ALREADY
+  submitted, including:
+  * job recommendations ("could be a strong match for this role", "apply now"),
+    job alerts, job-listing newsletters and digests
+  * unsolicited recruiter or founder outreach inviting the user to apply or chat
+    about a role they never applied to (even if the subject says "job offer")
+  * reminders to finish or start an application that was never submitted
+  * job-search services, coaching, courses and other marketing
+  * account security, identity verification and one-time-code emails
 - APPLIED: confirmation an application was received/submitted.
-- REJECTED: the user is not moving forward for this role.
-- INTERVIEW: scheduling/invitation/assessment/next-round for the user.
+- REJECTED: the user is not moving forward for this role, or the role was
+  filled/closed. "If you are not selected…" in an acknowledgement is NOT a rejection.
+- INTERVIEW: scheduling/invitation/assessment/next-round for the user. A
+  description of the hiring process that may follow is NOT an interview.
 - OFFER: a job offer is being extended.
 - status=null if job-related but none of the above fit.
 - company: the hiring company (never the ATS platform like Greenhouse/Lever/Workday).
@@ -96,6 +105,28 @@ def _parse(raw: str) -> Verdict | None:
     )
 
 
+# A small local model will call "Re: job offer" cold outreach an OFFER and a
+# "still under consideration" note an INTERVIEW. Those two statuses jump an
+# application forward, so require the email body to actually say so; otherwise
+# surface it for review (which never demotes an existing application).
+_EVIDENCE = {
+    Status.OFFER: re.compile(r"\boffer(?:ing|ed)?\b|compensation package|start date", re.IGNORECASE),
+    Status.INTERVIEW: re.compile(
+        r"interview|assessment|schedul|screen|availability|challenge|take[- ]home|on-?site"
+        r"|(?:a|quick|brief) (?:call|chat)|speak with|meet (?:with )?(?:you|the team)",
+        re.IGNORECASE,
+    ),
+}
+
+
+def _check_evidence(verdict: Verdict, email: Email) -> Verdict:
+    pattern = _EVIDENCE.get(verdict.status)
+    if pattern is not None and not pattern.search(email.body[:6000]):
+        log.info("LLM said %s without supporting text (uid=%s); marking NEEDS_REVIEW", verdict.status.value, email.uid)
+        verdict.status = Status.NEEDS_REVIEW
+    return verdict
+
+
 class LlmClassifier:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -124,7 +155,7 @@ class LlmClassifier:
                 continue
             verdict = _parse(raw)
             if verdict is not None:
-                return verdict
+                return _check_evidence(verdict, email)
             log.warning("LLM returned unparseable output (attempt %d) for uid=%s: %.200s", attempt, email.uid, raw)
 
         return Verdict(is_job_related=True, status=Status.NEEDS_REVIEW, source="needs_review",

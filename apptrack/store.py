@@ -68,6 +68,7 @@ _COMPANY_SUFFIXES = (
     ", inc.", ", inc", " inc.", " inc", " llc", " ltd", " corp.", " corp", " co.",
     " gmbh", " labs", " technologies", " technology", " tech", " group",
     " holdings", " services", " financial", " systems", " software", " company",
+    " industries", " usa", " automotive",
     ".com", ".io", ".ai",
 )
 
@@ -108,6 +109,12 @@ class Store:
                     ORDER BY p.processed_at DESC LIMIT 1), '')
                WHERE last_message_id = ''"""
         )
+        # Re-normalize company names when the suffix list grows, so existing rows
+        # keep matching new emails ("Anduril Industries" ↔ "Anduril").
+        for row in self.conn.execute("SELECT id, company, company_norm FROM applications").fetchall():
+            norm = normalize_company(row["company"])
+            if norm != row["company_norm"]:
+                self.conn.execute("UPDATE applications SET company_norm=? WHERE id=?", (norm, row["id"]))
         self.conn.commit()
 
     # --- sync state ---------------------------------------------------------

@@ -13,12 +13,15 @@ from .prefilter import ats_source
 # --- status patterns (checked in priority order) -----------------------------
 
 _REJECT_RE = re.compile(
-    r"(?:not (?:be )?moving forward|move forward with other|other candidates"
+    r"(?:not (?:to |be )?mov(?:e|ing) forward|move(?:d)? forward with (?:other|another|a candidate)"
+    r"|other candidates|made the (?:tough|difficult) (?:choice|decision) not to"
     r"|pursue other (?:candidates|applicants)|decided to (?:go|proceed) (?:in another|with (?:an)?other)"
-    r"|position has been filled|no longer under consideration|not (?:been )?selected"
+    r"|(?:position|role) has (?:now )?been (?:filled|closed)|(?:position|role) (?:is|has been) (?:closed|on hold)"
+    r"|no longer (?:under consideration|available)|not (?:been )?selected|completed hiring for"
     r"|unable to (?:move|proceed|offer)|will not be (?:progressing|proceeding)"
-    r"|unfortunately[^.]{0,120}(?:application|candidacy|position|role|time|qualifications)"
-    r"|regret to inform|wish you (?:the best|success|luck)[^.]{0,60}(?:search|endeavou?rs))",
+    r"|(?:do not|don't) (?:have a fit|think your skills|see a (?:strong )?match)"
+    r"|unfortunately[^.]{0,120}(?:application|candidacy|position|role|time|qualifications|fit)"
+    r"|regret to (?:inform|share)|wish you (?:the best|success|luck)[^.]{0,60}(?:search|endeavou?rs))",
     re.IGNORECASE,
 )
 
@@ -32,19 +35,41 @@ _INTERVIEW_RE = re.compile(
     r"(?:schedule (?:your|an|a) (?:interview|call|chat|conversation)"
     r"|interview (?:invitation|request|confirmed|scheduled|availability)"
     r"|invite you to (?:interview|a call|chat|speak|meet)"
-    r"|would love to (?:chat|speak|talk|meet)|set up (?:a|some) time"
-    r"|phone screen|technical (?:interview|screen)|onsite|on-site"
+    r"|phone screen|technical (?:interview|screen)|on-?site interview"
     r"|take[- ]home (?:assessment|assignment|challenge)|coding challenge|online assessment"
+    r"|(?:technical|coding) assessment|assessments? invitation"
     r"|next (?:step|round)[^.]{0,80}(?:interview|call|assessment)"
     r"|your interview with)",
     re.IGNORECASE,
 )
+# Dropped on purpose: "would love to chat", "set up a time", bare "onsite" —
+# they matched cold recruiter outreach ("a part-time, on-site role", "open to a
+# quick 15 minute chat?") and created INTERVIEW rows for jobs never applied to.
+# Those emails now fall through to the LLM, which is told to ignore outreach.
+
+# Rejection/interview language that's only hypothetical: "If you are not
+# selected for this position…", "If you're shortlisted, next steps will consist
+# of assessments and interviews". Application acknowledgements are full of it.
+_CONDITIONAL_RE = re.compile(
+    r"\b(?:if|should|whether|in the event|in case|once|when)\b[^.!?\n]*$", re.IGNORECASE
+)
+
+
+def _firm_search(pattern: re.Pattern, text: str) -> bool:
+    """True if `pattern` matches somewhere not inside a conditional clause."""
+    for m in pattern.finditer(text):
+        sentence_start = max(text.rfind(".", 0, m.start()), text.rfind("\n", 0, m.start()),
+                             text.rfind("!", 0, m.start()), text.rfind("?", 0, m.start()))
+        if not _CONDITIONAL_RE.search(text[sentence_start + 1 : m.start()]):
+            return True
+    return False
 
 _APPLIED_RE = re.compile(
-    r"(?:thank (?:you|s) for (?:applying|your application|your interest in (?:applying|the))"
+    r"(?:thank(?:s| you) for (?:applying|your application|your interest in (?:applying|the))"
     r"|(?:we(?:'ve| have)? )?received your application|application (?:was |has been )?(?:received|submitted)"
     r"|your application (?:to|for|was sent)|successfully (?:applied|submitted)"
-    r"|application confirmation|confirm(?:ing|ation of)? (?:receipt of )?your application)",
+    r"|application (?:sent|confirmation)|copy of application to"
+    r"|confirm(?:ing|ation of)? (?:receipt of )?your application)",
     re.IGNORECASE,
 )
 
@@ -52,9 +77,11 @@ _APPLIED_RE = re.compile(
 
 # "Your application to Stripe", "your application for the SWE role at Figma"
 _COMPANY_PATTERNS = [
-    re.compile(r"application (?:to|at|with) (?P<c>[A-Z][\w.&'\- ]{1,40}?)(?:\s+(?:for|was|has|is|-|–|\|)|[.,!\n]|$)"),
-    re.compile(r"(?:position|role|opportunity|interview|career(?:s)?) (?:at|with) (?P<c>[A-Z][\w.&'\- ]{1,40}?)(?:[.,!\n]|\s+(?:for|as|-|–|\|)|$)"),
-    re.compile(r"joining (?P<c>[A-Z][\w.&'\- ]{1,40}?)(?:[.,!\n]|$)"),
+    re.compile(r"(?i:application (?:to|at|with)) (?P<c>[A-Z][\w.&'\- ]{1,40}?)(?:\s+(?:for|was|has|is|-|–|\|)|[.,!\n]|$)"),
+    # "Thanks for applying to SpaceXSI!", "Thank you for applying at CJ"
+    re.compile(r"(?i:thank(?:s| you) for applying (?:to|at|with)) (?P<c>[A-Z0-9][\w.&'\- ]{1,40}?)(?:\s+(?:for|-|–|\|)|[.,!\n]|$)"),
+    re.compile(r"(?i:(?:position|role|opportunity|interview|careers?) (?:at|with)) (?P<c>[A-Z][\w.&'\- ]{1,40}?)(?:[.,!\n]|\s+(?:for|as|-|–|\|)|$)"),
+    re.compile(r"(?i:joining) (?P<c>[A-Z][\w.&'\- ]{1,40}?)(?:[.,!\n]|$)"),
 ]
 
 _ROLE_PATTERNS = [
@@ -66,8 +93,9 @@ _ROLE_PATTERNS = [
 # ATS notification mailboxes often carry the company in the display name:
 # "Figma <no-reply@ashbyhq.com>", "Careers at Ramp <notifications@lever.co>"
 _DISPLAY_CLEAN_RE = re.compile(
-    r"^(?:the\s+)?(.*?)\s*(?:careers?|recruiting|recruitment|talent(?:\s+(?:acquisition|team))?"
-    r"|hiring(?:\s+team)?|jobs?|team|hr|people(?:\s+ops)?|notifications?|no[- ]?reply)?\s*$",
+    r"^(?:the\s+)?(?:(?:careers?|jobs?|recruiting)(?:\s+(?:at|@))?\s+)?(.*?)"
+    r"(?:\s+(?:careers?|recruiting|recruitment|talent|acquisition|hiring|jobs?|team|hr|people|ops"
+    r"|notifications?|no[- ]?reply|assessments?|email)|(?<=[a-z])Email)*\s*$",
     re.IGNORECASE,
 )
 _GENERIC_DISPLAY_RE = re.compile(
@@ -105,6 +133,9 @@ def _clean_company(raw: str) -> str:
         if i > 0 and (low in _COMPANY_STOPWORDS or (tok[:1].islower() and low not in _NAME_CONNECTORS)):
             break
         kept.append(tok)
+    # A connector can't end a name ("role at Abridge and for taking…" → "Abridge").
+    while kept and kept[-1].lower() in _NAME_CONNECTORS:
+        kept.pop()
     c = " ".join(kept).strip(".,!|–-—:;\"' ")
     # Drop trailing boilerplate words that leak into the match
     c = re.sub(r"\s+(?:team|careers?|recruiting|talent|hiring|hr)$", "", c, flags=re.IGNORECASE)
@@ -112,7 +143,17 @@ def _clean_company(raw: str) -> str:
         return ""
     if _GENERIC_DISPLAY_RE.match(c):
         return ""
+    # "Thanks for applying to Software Engineer II, Backend" names the role, not the company.
+    if _TITLE_WORD_RE.search(c):
+        return ""
     return c
+
+
+_TITLE_WORD_RE = re.compile(
+    r"\b(?:engineers?|developer|swe|sde|scientist|analyst|designer|architect|intern(?:ship)?"
+    r"|manager|associate|specialist|technician|administrator|staff|senior|junior|new grad)\b",
+    re.IGNORECASE,
+)
 
 
 _ROLE_STOPLIST = {"current", "the", "this", "that", "time", "your", "our", "new"}
@@ -175,11 +216,15 @@ def classify(email: Email) -> Verdict | None:
     source = ats_source(email.sender_domain) or ""
 
     status: Status | None = None
-    if _REJECT_RE.search(text):
+    if _firm_search(_REJECT_RE, text):
         status = Status.REJECTED
     elif _OFFER_RE.search(text):
         status = Status.OFFER
-    elif _INTERVIEW_RE.search(text):
+    elif _APPLIED_RE.search(email.subject):
+        # An acknowledgement subject ("We've Received Your Application") wins
+        # over interview words in its body, which describe the process ahead.
+        status = Status.APPLIED
+    elif _firm_search(_INTERVIEW_RE, text):
         status = Status.INTERVIEW
     elif _APPLIED_RE.search(text):
         status = Status.APPLIED
